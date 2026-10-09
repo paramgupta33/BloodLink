@@ -1,6 +1,6 @@
 import React from 'react';
 import { EmergencyRequest, InventoryItem, Donor, NavTab } from '../../types/bloodlink';
-import { MAP_MUMBAI_URL } from '../../data/mockData';
+import { LeafletMapView, MapMarker, MapCircle } from '../maps/LeafletMapView';
 
 interface OverviewScreenProps {
   requests: EmergencyRequest[];
@@ -225,79 +225,66 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
               </button>
             </div>
 
-            <div className="relative w-full h-72 bg-[#0a0e18] overflow-hidden">
-              <div
-                className="absolute inset-0 bg-cover bg-center opacity-30 mix-blend-luminosity"
-                style={{ backgroundImage: `url('${MAP_MUMBAI_URL}')` }}
-              ></div>
-
-              {/* Radar Rings & Route */}
-              <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-40">
-                <circle cx="50%" cy="48%" r="45" fill="none" stroke="#4cd7f6" strokeWidth="1" strokeDasharray="3 3" />
-                <circle cx="50%" cy="48%" r="95" fill="none" stroke="#4cd7f6" strokeWidth="1" strokeDasharray="4 4" />
-                <circle cx="50%" cy="48%" r="145" fill="none" stroke="#ff5451" strokeWidth="1.2" strokeDasharray="4 4" />
-                <path d="M 160 140 Q 250 160 360 145" fill="none" stroke="#4cd7f6" strokeWidth="2.5" strokeDasharray="4 4" />
-              </svg>
-
-              {/* Pin 1: Lilavati Hospital (Critical) */}
-              <div
-                style={{ top: '48%', left: '50%' }}
-                className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer z-20 group"
-                onClick={() => onOpenDispatchTracking(requests[0])}
-              >
-                <div className="relative flex items-center justify-center">
-                  <div className="w-8 h-8 rounded-full bg-[#ff5451]/30 animate-ping absolute"></div>
-                  <div className="w-8 h-8 rounded-full bg-[#ff5451] text-[#5c0008] flex items-center justify-center shadow-md font-bold text-xs">
-                    O-
+            <div className="p-3">
+              <LeafletMapView
+                center={[19.0519, 72.8295]}
+                zoom={12}
+                height="280px"
+                markers={[
+                  {
+                    id: 'overview-lilavati',
+                    lat: 19.0519,
+                    lng: 72.8295,
+                    title: 'Lilavati Hospital & Research Centre',
+                    subtitle: '3 Units O- Needed (2u Sourced, ETA 8m)',
+                    type: 'hospital',
+                    status: 'critical',
+                  },
+                  {
+                    id: 'overview-rotary',
+                    lat: 19.0573,
+                    lng: 72.8415,
+                    title: 'Rotary Blood Bank & Research Centre',
+                    subtitle: '1 Unit Dispatched (3.4°C Cold Chain)',
+                    type: 'centre',
+                    status: 'low',
+                  },
+                  {
+                    id: 'overview-donor',
+                    lat: 19.1310,
+                    lng: 72.8320,
+                    title: 'Rahul Shah (Voluntary Donor)',
+                    subtitle: 'O- Negative · En Route to Depot',
+                    type: 'donor',
+                    status: 'accepted',
+                  },
+                ]}
+                circles={[
+                  {
+                    id: 'overview-corridor',
+                    lat: 19.0519,
+                    lng: 72.8295,
+                    radiusMeters: 5000,
+                    color: '#4cd7f6',
+                    fillColor: '#4cd7f6',
+                    fillOpacity: 0.05,
+                    dashArray: '3, 3',
+                  },
+                ]}
+                legend={
+                  <div className="flex items-center gap-3 text-[10px]">
+                    <span className="flex items-center gap-1 text-white">
+                      <span className="w-2 h-2 rounded-full bg-[#ff5451]"></span> Hospital (Critical)
+                    </span>
+                    <span className="flex items-center gap-1 text-white">
+                      <span className="w-2 h-2 rounded-full bg-[#4cd7f6]"></span> Blood Centre
+                    </span>
+                    <span className="flex items-center gap-1 text-white">
+                      <span className="w-2 h-2 rounded-full bg-[#4edea3]"></span> Active Donor
+                    </span>
                   </div>
-                </div>
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block bg-[#1c1f2a] border border-[#262a35] text-[11px] text-white p-2 rounded-lg whitespace-nowrap shadow-xl">
-                  Lilavati Hospital: 3u O- (2u Fulfilled, ETA 8m)
-                </div>
-              </div>
-
-              {/* Pin 2: Rotary Blood Bank */}
-              <div
-                style={{ top: '38%', left: '28%' }}
-                className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer z-20 group"
-              >
-                <div className="w-7 h-7 rounded-full bg-[#4cd7f6] text-[#003640] flex items-center justify-center shadow-md">
-                  <span className="material-symbols-outlined text-[16px]">bloodtype</span>
-                </div>
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block bg-[#1c1f2a] border border-[#262a35] text-[11px] text-white p-2 rounded-lg whitespace-nowrap shadow-xl">
-                  Rotary Blood Bank (Dispatched)
-                </div>
-              </div>
-
-              {/* Pin 3: Donor Rahul S. */}
-              <div
-                style={{ top: '35%', left: '68%' }}
-                className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer z-20 group"
-                onClick={() => onOpenDonorPassport(donors[0])}
-              >
-                <div className="w-7 h-7 rounded-full bg-[#4edea3] text-[#003824] flex items-center justify-center shadow-md">
-                  <span className="material-symbols-outlined text-[16px]">person</span>
-                </div>
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block bg-[#1c1f2a] border border-[#262a35] text-[11px] text-white p-2 rounded-lg whitespace-nowrap shadow-xl">
-                  Donor: Rahul Shah (Accepted & Screening)
-                </div>
-              </div>
-
-              {/* Overlay Legend */}
-              <div className="absolute bottom-2.5 left-2.5 right-2.5 bg-[#0f131d]/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-[#262a35] flex items-center justify-between text-[11px] font-mono">
-                <div className="flex items-center gap-3">
-                  <span className="flex items-center gap-1.5 text-white">
-                    <span className="w-2 h-2 rounded-full bg-[#ff5451]"></span> Hospital (Critical)
-                  </span>
-                  <span className="flex items-center gap-1.5 text-white">
-                    <span className="w-2 h-2 rounded-full bg-[#4cd7f6]"></span> Blood Centre
-                  </span>
-                  <span className="flex items-center gap-1.5 text-white">
-                    <span className="w-2 h-2 rounded-full bg-[#4edea3]"></span> Active Donor
-                  </span>
-                </div>
-                <span className="text-[#dfe2f1]/50">Live Geo-corridor</span>
-              </div>
+                }
+              />
             </div>
           </div>
 

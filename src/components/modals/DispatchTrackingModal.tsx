@@ -1,5 +1,7 @@
 import React from 'react';
 import { EmergencyRequest } from '../../types/bloodlink';
+import { LeafletMapView, MapMarker, MapPolyline } from '../maps/LeafletMapView';
+import { calculateHaversineDistance, formatDistance } from '../../utils/geoUtils';
 
 interface DispatchTrackingModalProps {
   isOpen: boolean;
@@ -158,6 +160,102 @@ export const DispatchTrackingModal: React.FC<DispatchTrackingModalProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Live Route Coordination Map */}
+        {(() => {
+          const hospLat = request.lat || 19.0519;
+          const hospLng = request.lng || 72.8295;
+          const depotLat = 19.0573;
+          const depotLng = 72.8415;
+          const distanceKm = calculateHaversineDistance(depotLat, depotLng, hospLat, hospLng);
+
+          // Courier position moves towards hospital based on currentStep (1 to 7)
+          const progressRatio = Math.min(1, Math.max(0, (currentStep - 2) / 4));
+          const courierLat = depotLat + (hospLat - depotLat) * progressRatio;
+          const courierLng = depotLng + (hospLng - depotLng) * progressRatio;
+
+          const routeMarkers: MapMarker[] = [
+            {
+              id: 'dest-hospital',
+              lat: hospLat,
+              lng: hospLng,
+              title: request.hospitalName,
+              subtitle: `Destination · ${request.requestId} (${request.bloodGroup})`,
+              type: 'hospital',
+              status: currentStep === 7 ? 'stable' : 'critical',
+              badge: 'HOSPITAL',
+            },
+            {
+              id: 'origin-depot',
+              lat: depotLat,
+              lng: depotLng,
+              title: request.sourceBreakdown?.inventorySource || 'Rotary Blood Bank Depot',
+              subtitle: 'Fulfilling Reserve Depot (Cold-Chain Verified)',
+              type: 'centre',
+              status: 'stable',
+              badge: 'DEPOT',
+            },
+            ...(currentStep >= 3 && currentStep < 7
+              ? [
+                  {
+                    id: 'active-courier',
+                    lat: courierLat,
+                    lng: courierLng,
+                    title: `Courier: ${request.courierName || 'Rapid Van #4'}`,
+                    subtitle: `ETA: ${request.eta || '8 mins'} · Temp: ${request.temperature || '3.4°C'}`,
+                    type: 'user' as const,
+                    status: 'active' as const,
+                    badge: 'LIVE COURIER',
+                  },
+                ]
+              : []),
+          ];
+
+          const routePolylines: MapPolyline[] = [
+            {
+              id: 'dispatch-corridor',
+              positions: [
+                [depotLat, depotLng],
+                [19.0558, 72.8370],
+                [19.0532, 72.8325],
+                [hospLat, hospLng],
+              ],
+              color: '#4cd7f6',
+              weight: 3.5,
+              dashArray: '6, 6',
+              label: `Transit Corridor: ${formatDistance(distanceKm)}`,
+            },
+          ];
+
+          return (
+            <div className="mt-3.5 p-3 rounded-xl bg-[#1c1f2a] border border-[#262a35] flex flex-col gap-2">
+              <div className="flex items-center justify-between text-xs font-mono">
+                <span className="text-[#dfe2f1]/70 uppercase">Live GPS Dispatch Track</span>
+                <span className="text-[#4cd7f6]">{formatDistance(distanceKm)} Corridor · ETA {request.eta || '8m'}</span>
+              </div>
+              <LeafletMapView
+                center={[19.0544, 72.8355]}
+                zoom={14}
+                height="200px"
+                markers={routeMarkers}
+                polylines={routePolylines}
+                legend={
+                  <div className="flex items-center gap-3 text-[10px]">
+                    <span className="flex items-center gap-1 text-white">
+                      <span className="w-2 h-2 rounded-full bg-[#4cd7f6]"></span> Depot
+                    </span>
+                    <span className="flex items-center gap-1 text-white">
+                      <span className="w-2 h-2 rounded-full bg-[#ff5451]"></span> Hospital
+                    </span>
+                    <span className="flex items-center gap-1 text-[#4edea3]">
+                      <span className="inline-block w-3 h-0.5 bg-[#4cd7f6]"></span> Cold Route
+                    </span>
+                  </div>
+                }
+              />
+            </div>
+          );
+        })()}
 
         {/* 7-Stage Interactive Timeline */}
         <div className="mt-4 p-4 rounded-xl bg-[#1c1f2a] border border-[#262a35] flex flex-col gap-3">

@@ -10,6 +10,13 @@ import {
   ForecastItem,
   CentreTab,
 } from '../../types/bloodlink';
+import { LeafletMapView, MapMarker, MapCircle } from '../maps/LeafletMapView';
+import {
+  getExternalDirectionsUrl,
+  calculateHaversineDistance,
+  formatDistance,
+  PRESET_MUMBAI_AREAS,
+} from '../../utils/geoUtils';
 
 interface BloodCentreDashboardProps {
   inventory: InventoryItem[];
@@ -51,11 +58,25 @@ export const BloodCentreDashboard: React.FC<BloodCentreDashboardProps> = ({
   // Camp Creation Modal State
   const [isCampModalOpen, setIsCampModalOpen] = useState(false);
   const [newCampTitle, setNewCampTitle] = useState('');
-  const [newCampLocation, setNewCampLocation] = useState('');
+  const [newCampLocation, setNewCampLocation] = useState('BKC Ground Complex, Bandra Kurla Complex');
+  const [newCampLat, setNewCampLat] = useState<number>(19.0600);
+  const [newCampLng, setNewCampLng] = useState<number>(72.8600);
   const [newCampDate, setNewCampDate] = useState('Sun, Nov 16');
   const [newCampTime, setNewCampTime] = useState('09:00 AM – 05:00 PM');
   const [newCampTag, setNewCampTag] = useState('Whole Blood & Platelets');
   const [newCampGoal, setNewCampGoal] = useState(150);
+
+  // Centre location state for Profile Map (editable by authorized staff)
+  const [centreCoords, setCentreCoords] = useState<{ lat: number; lng: number }>({
+    lat: centre.lat || 19.0573,
+    lng: centre.lng || 72.8415,
+  });
+  const [centreAddress, setCentreAddress] = useState(centre.address);
+  const [isEditingLocation, setIsEditingLocation] = useState(false);
+
+  // Camps Map state
+  const [selectedCampId, setSelectedCampId] = useState<string | null>(null);
+  const [campsViewMode, setCampsViewMode] = useState<'both' | 'map' | 'list'>('both');
 
   // Request review drawer / modal
   const [selectedRequestReview, setSelectedRequestReview] = useState<EmergencyRequest | null>(null);
@@ -84,11 +105,20 @@ export const BloodCentreDashboard: React.FC<BloodCentreDashboardProps> = ({
     e.preventDefault();
     if (!newCampTitle.trim()) return;
 
+    const distance = calculateHaversineDistance(
+      centreCoords.lat,
+      centreCoords.lng,
+      newCampLat,
+      newCampLng
+    );
+
     const camp: DonationCamp = {
       id: `camp-${Date.now()}`,
       title: newCampTitle,
       locationName: newCampLocation,
       address: `${newCampLocation}, Mumbai`,
+      lat: newCampLat,
+      lng: newCampLng,
       dateStr: newCampDate,
       timeStr: newCampTime,
       targetTag: newCampTag,
@@ -99,8 +129,9 @@ export const BloodCentreDashboard: React.FC<BloodCentreDashboardProps> = ({
     };
 
     onCreateCamp(camp);
+    setSelectedCampId(camp.id);
     setIsCampModalOpen(false);
-    showToast(`Donation camp "${camp.title}" created successfully.`);
+    showToast(`Donation drive "${camp.title}" scheduled (${formatDistance(distance)} from centre).`);
     setNewCampTitle('');
   };
 
@@ -632,59 +663,195 @@ export const BloodCentreDashboard: React.FC<BloodCentreDashboardProps> = ({
         </div>
       )}
 
-      {/* VIEW 5: DONATION CAMPS */}
-      {activeTab === 'camps' && (
-        <div className="flex flex-col gap-6">
-          <div className="p-4 rounded-2xl bg-[#171b26] border border-[#262a35] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h2 className="font-headline text-lg font-bold text-white">Community Donation Drives</h2>
-              <p className="text-xs text-[#dfe2f1]/60">
-                Organize field collection camps to replenish municipal blood reserve levels.
-              </p>
-            </div>
-            <button
-              onClick={() => setIsCampModalOpen(true)}
-              className="px-4 py-2 rounded-xl bg-[#4cd7f6] text-[#003640] font-headline font-bold text-xs hover:brightness-110 cursor-pointer flex items-center gap-1.5 self-start sm:self-auto"
-            >
-              <span className="material-symbols-outlined text-[16px]">add</span>
-              <span>Create Donation Camp</span>
-            </button>
-          </div>
+      {/* VIEW 5: DONATION CAMPS WITH MAP */}
+      {activeTab === 'camps' && (() => {
+        const campMarkers: MapMarker[] = [
+          // Blood Centre Headquarters Marker
+          {
+            id: 'centre-home',
+            lat: centreCoords.lat,
+            lng: centreCoords.lng,
+            title: centre.name,
+            subtitle: `${centreAddress} · Operating Blood Bank HQ & Cold Chain Lab`,
+            type: 'centre',
+            status: 'stable',
+            badge: 'CENTRE HQ',
+          },
+          // Donation Camps
+          ...camps
+            .filter((c) => c.lat && c.lng)
+            .map((c) => {
+              const distFromHQ = calculateHaversineDistance(
+                centreCoords.lat,
+                centreCoords.lng,
+                c.lat!,
+                c.lng!
+              );
+              return {
+                id: c.id,
+                lat: c.lat!,
+                lng: c.lng!,
+                title: c.title,
+                subtitle: `${c.dateStr} · ${c.timeStr} · ${formatDistance(distFromHQ)} from HQ`,
+                type: 'camp' as const,
+                badge: c.targetTag,
+              };
+            }),
+        ];
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {camps.map((camp) => (
-              <div
-                key={camp.id}
-                className="p-5 rounded-2xl bg-[#171b26] border border-[#262a35] flex flex-col justify-between gap-3"
-              >
-                <div>
-                  <div className="flex items-center justify-between">
-                    <span className="px-2 py-0.5 rounded-full bg-[#ff5451] text-[#5c0008] font-mono text-[10px] font-bold">
-                      {camp.targetTag}
-                    </span>
-                    <span className="text-xs font-mono text-white">{camp.dateStr}</span>
-                  </div>
+        const campCircles: MapCircle[] = [
+          {
+            id: 'centre-operational-coverage',
+            lat: centreCoords.lat,
+            lng: centreCoords.lng,
+            radiusMeters: 18000,
+            color: '#4cd7f6',
+            fillColor: '#4cd7f6',
+            fillOpacity: 0.05,
+            dashArray: '5, 5',
+            label: '18 km Mobile Drive Coverage Radius',
+          },
+        ];
 
-                  <h3 className="font-headline font-bold text-sm text-white mt-2">
-                    {camp.title}
-                  </h3>
-                  <p className="text-xs text-[#dfe2f1]/60 mt-0.5">{camp.address}</p>
-
-                  <div className="mt-3 flex items-center justify-between text-xs font-mono">
-                    <span className="text-[#dfe2f1]/60">Registered:</span>
-                    <span className="text-[#4edea3] font-bold">
-                      {camp.registeredCount} / {camp.goalCount} donors
-                    </span>
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-[#262a35] flex items-center justify-between text-[11px] font-mono text-[#dfe2f1]/50">
-                  <span>Operating: {camp.timeStr}</span>
-                  <span className="text-[#4cd7f6]">Active Drive</span>
-                </div>
+        return (
+          <div className="flex flex-col gap-6">
+            <div className="p-4 rounded-2xl bg-[#171b26] border border-[#262a35] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="font-headline text-lg font-bold text-white">Community Donation Drives</h2>
+                <p className="text-xs text-[#dfe2f1]/60">
+                  Organize field collection camps within your center's 18 km operational perimeter to replenish municipal reserves.
+                </p>
               </div>
-            ))}
+
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <div className="flex items-center bg-[#1c1f2a] p-1 rounded-xl border border-[#262a35]">
+                  {(['both', 'map', 'list'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setCampsViewMode(mode)}
+                      className={`px-3 py-1 rounded-lg text-xs font-mono font-medium capitalize transition-colors cursor-pointer ${
+                        campsViewMode === mode
+                          ? 'bg-[#262a35] text-white font-bold shadow-sm'
+                          : 'text-[#dfe2f1]/60 hover:text-white'
+                      }`}
+                    >
+                      {mode === 'both' ? 'Split View' : mode === 'map' ? 'Map Only' : 'List Only'}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => setIsCampModalOpen(true)}
+                  className="px-3.5 py-1.5 rounded-xl bg-[#4cd7f6] text-[#003640] font-headline font-bold text-xs hover:brightness-110 cursor-pointer flex items-center gap-1.5 shadow-md"
+                >
+                  <span className="material-symbols-outlined text-[16px]">add</span>
+                  <span>New Drive</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+              {/* Camps Map */}
+              {(campsViewMode === 'both' || campsViewMode === 'map') && (
+                <div
+                  className={`${
+                    campsViewMode === 'both' ? 'lg:col-span-6' : 'lg:col-span-12'
+                  } flex flex-col gap-2`}
+                >
+                  <LeafletMapView
+                    center={[centreCoords.lat, centreCoords.lng]}
+                    zoom={11}
+                    height={campsViewMode === 'map' ? '500px' : '420px'}
+                    markers={campMarkers}
+                    circles={campCircles}
+                    selectedMarkerId={selectedCampId}
+                    onSelectMarker={(id) => setSelectedCampId(id)}
+                    legend={
+                      <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                        <span className="flex items-center gap-1.5 text-white">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#4cd7f6]"></span> Blood Centre HQ
+                        </span>
+                        <span className="flex items-center gap-1.5 text-white">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#ffc107]"></span> Scheduled Drive
+                        </span>
+                        <span className="text-[#dfe2f1]/50 border-l border-[#262a35] pl-2 hidden sm:inline">
+                          18 km Operational Area
+                        </span>
+                      </div>
+                    }
+                  />
+                  <div className="flex items-center justify-between text-[11px] font-mono text-[#dfe2f1]/50 px-1">
+                    <span>Operational HQ + Field Collection Drives</span>
+                    <span>Click marker to highlight drive card</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Camps Cards List */}
+              {(campsViewMode === 'both' || campsViewMode === 'list') && (
+                <div
+                  className={`${
+                    campsViewMode === 'both' ? 'lg:col-span-6' : 'lg:col-span-12'
+                  } grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[580px] overflow-y-auto pr-1`}
+                >
+                  {camps.map((camp) => {
+                    const isSelected = selectedCampId === camp.id;
+                    return (
+                      <div
+                        key={camp.id}
+                        onClick={() => setSelectedCampId(camp.id)}
+                        className={`p-5 rounded-2xl bg-[#171b26] border flex flex-col justify-between gap-3 transition-all cursor-pointer ${
+                          isSelected
+                            ? 'border-[#4cd7f6] ring-1 ring-[#4cd7f6] shadow-lg shadow-[#4cd7f6]/10'
+                            : 'border-[#262a35] hover:border-[#353944]'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className="px-2 py-0.5 rounded-full bg-[#ff5451] text-[#5c0008] font-mono text-[10px] font-bold">
+                              {camp.targetTag}
+                            </span>
+                            <span className="text-xs font-mono text-white">{camp.dateStr}</span>
+                          </div>
+
+                          <h3 className="font-headline font-bold text-sm text-white mt-2">
+                            {camp.title}
+                          </h3>
+                          <p className="text-xs text-[#dfe2f1]/60 mt-0.5">{camp.address}</p>
+
+                          <div className="mt-3 flex items-center justify-between text-xs font-mono">
+                            <span className="text-[#dfe2f1]/60">Registered:</span>
+                            <span className="text-[#4edea3] font-bold">
+                              {camp.registeredCount} / {camp.goalCount} donors
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-[#262a35] flex items-center justify-between text-[11px] font-mono text-[#dfe2f1]/50">
+                          <span>Operating: {camp.timeStr}</span>
+                          {camp.lat && camp.lng && (
+                            <a
+                              href={getExternalDirectionsUrl(camp.lat, camp.lng)}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-[#4cd7f6] hover:underline flex items-center gap-0.5"
+                            >
+                              <span className="material-symbols-outlined text-[13px]">directions</span>
+                              <span>Map</span>
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
+        );
+      })()}
 
           {/* Create Camp Modal */}
           {isCampModalOpen && (
@@ -715,8 +882,54 @@ export const BloodCentreDashboard: React.FC<BloodCentreDashboardProps> = ({
                     />
                   </div>
 
+                  {/* Venue Presets & Coordinate Picker */}
                   <div className="flex flex-col gap-1">
-                    <label className="text-xs text-[#dfe2f1]/70 font-medium">Location / Venue</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs text-[#dfe2f1]/70 font-medium">Venue Preset</label>
+                      <span className="text-[10px] font-mono text-[#4cd7f6]">Auto-Coordinates</span>
+                    </div>
+                    <select
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === 'bkc') {
+                          setNewCampLocation('BKC Ground Complex, Bandra Kurla Complex');
+                          setNewCampLat(19.0600);
+                          setNewCampLng(72.8600);
+                        } else if (val === 'dadar') {
+                          setNewCampLocation('Shivaji Park Gymkhana Ground, Dadar');
+                          setNewCampLat(19.0269);
+                          setNewCampLng(72.8375);
+                        } else if (val === 'andheri') {
+                          setNewCampLocation('Andheri Sports Complex, Andheri West');
+                          setNewCampLat(19.1305);
+                          setNewCampLng(72.8310);
+                        } else if (val === 'goregaon') {
+                          setNewCampLocation('NESCO Exhibition Ground, Goregaon East');
+                          setNewCampLat(19.1528);
+                          setNewCampLng(72.8557);
+                        } else if (val === 'vashi') {
+                          setNewCampLocation('Inorbit Atrium, Sector 30A, Vashi');
+                          setNewCampLat(19.0657);
+                          setNewCampLng(72.9984);
+                        } else if (val === 'thane') {
+                          setNewCampLocation('Viviana Ground, Eastern Express Highway, Thane');
+                          setNewCampLat(19.2088);
+                          setNewCampLng(72.9712);
+                        }
+                      }}
+                      className="px-3 py-2 rounded-xl bg-[#1c1f2a] border border-[#262a35] text-xs text-white focus:outline-none focus:border-[#4cd7f6]"
+                    >
+                      <option value="bkc">BKC Ground Complex (Bandra Kurla Complex) - 3.2 km</option>
+                      <option value="dadar">Shivaji Park Gymkhana (Dadar) - 4.1 km</option>
+                      <option value="andheri">Andheri Sports Complex (Andheri West) - 9.1 km</option>
+                      <option value="goregaon">NESCO Exhibition Ground (Goregaon East) - 12.4 km</option>
+                      <option value="vashi">Inorbit Mall Atrium (Vashi, Navi Mumbai) - 18.2 km</option>
+                      <option value="thane">Viviana Mall Ground (Thane) - 23.5 km [Exceeds Limit]</option>
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-[#dfe2f1]/70 font-medium">Venue Address / Description</label>
                     <input
                       type="text"
                       required
@@ -726,6 +939,65 @@ export const BloodCentreDashboard: React.FC<BloodCentreDashboardProps> = ({
                       className="px-3 py-2 rounded-xl bg-[#1c1f2a] border border-[#262a35] text-xs text-white focus:outline-none focus:border-[#4cd7f6]"
                     />
                   </div>
+
+                  {/* Coordinates & Operational Area Verification */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] text-[#dfe2f1]/60 font-mono">Latitude</label>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        required
+                        value={newCampLat}
+                        onChange={(e) => setNewCampLat(parseFloat(e.target.value) || 19.0)}
+                        className="px-2.5 py-1.5 rounded-xl bg-[#1c1f2a] border border-[#262a35] text-xs font-mono text-white focus:outline-none focus:border-[#4cd7f6]"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] text-[#dfe2f1]/60 font-mono">Longitude</label>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        required
+                        value={newCampLng}
+                        onChange={(e) => setNewCampLng(parseFloat(e.target.value) || 72.8)}
+                        className="px-2.5 py-1.5 rounded-xl bg-[#1c1f2a] border border-[#262a35] text-xs font-mono text-white focus:outline-none focus:border-[#4cd7f6]"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Verification Banner */}
+                  {(() => {
+                    const dist = calculateHaversineDistance(
+                      centreCoords.lat,
+                      centreCoords.lng,
+                      newCampLat,
+                      newCampLng
+                    );
+                    const isWithinOperationalArea = dist <= 20;
+
+                    return (
+                      <div
+                        className={`p-2.5 rounded-xl border text-xs font-mono flex items-center justify-between ${
+                          isWithinOperationalArea
+                            ? 'bg-[#00a572]/15 border-[#00a572]/30 text-[#4edea3]'
+                            : 'bg-[#ff5451]/15 border-[#ff5451]/30 text-[#ffb3ad]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-[16px]">
+                            {isWithinOperationalArea ? 'check_circle' : 'warning'}
+                          </span>
+                          <span>
+                            {dist} km from HQ ({isWithinOperationalArea ? 'Within 20 km Limit' : 'Exceeds 20 km Area'})
+                          </span>
+                        </div>
+                        <span className="text-[10px] opacity-80">
+                          {isWithinOperationalArea ? 'Verified' : 'Flagged'}
+                        </span>
+                      </div>
+                    );
+                  })()}
 
                   <div className="grid grid-cols-2 gap-3">
                     <div className="flex flex-col gap-1">
@@ -769,8 +1041,6 @@ export const BloodCentreDashboard: React.FC<BloodCentreDashboardProps> = ({
               </div>
             </div>
           )}
-        </div>
-      )}
 
       {/* VIEW 6: FORECASTS */}
       {activeTab === 'forecasts' && (
@@ -840,56 +1110,144 @@ export const BloodCentreDashboard: React.FC<BloodCentreDashboardProps> = ({
         </div>
       )}
 
-      {/* VIEW 7: CENTRE PROFILE */}
+      {/* VIEW 7: CENTRE PROFILE WITH MAP & LOCATION CONFIGURATION */}
       {activeTab === 'profile' && (
-        <div className="max-w-2xl mx-auto w-full p-6 rounded-2xl bg-[#171b26] border border-[#262a35] flex flex-col gap-5 shadow-xl">
-          <div className="flex items-start justify-between pb-3 border-b border-[#262a35]">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-[#4cd7f6]/20 text-[#4cd7f6] flex items-center justify-center font-bold">
-                <span className="material-symbols-outlined text-[26px]">local_hospital</span>
+        <div className="max-w-4xl mx-auto w-full flex flex-col gap-6">
+          <div className="p-6 rounded-2xl bg-[#171b26] border border-[#262a35] flex flex-col gap-5 shadow-xl">
+            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 pb-4 border-b border-[#262a35]">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-[#4cd7f6]/20 text-[#4cd7f6] flex items-center justify-center font-bold shrink-0">
+                  <span className="material-symbols-outlined text-[26px]">local_hospital</span>
+                </div>
+                <div>
+                  <h2 className="font-headline text-lg sm:text-xl font-bold text-white">{centre.name}</h2>
+                  <span className="text-xs font-mono text-[#4edea3]">Authorized Transfusion Bank</span>
+                </div>
               </div>
-              <div>
-                <h2 className="font-headline text-lg font-bold text-white">{centre.name}</h2>
-                <span className="text-xs font-mono text-[#4edea3]">Authorized Transfusion Bank</span>
-              </div>
-            </div>
-            <span className="px-2.5 py-1 rounded bg-[#00a572]/20 text-[#4edea3] text-[10px] font-mono font-bold">
-              LICENSED
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 text-xs font-mono">
-            <div className="p-3 rounded-xl bg-[#1c1f2a] border border-[#262a35]">
-              <span className="text-[#dfe2f1]/50 block">MUNICIPAL ADDRESS</span>
-              <span className="text-white font-semibold mt-1 block font-sans">{centre.address}</span>
-            </div>
-
-            <div className="p-3 rounded-xl bg-[#1c1f2a] border border-[#262a35]">
-              <span className="text-[#dfe2f1]/50 block">OPERATING HOURS</span>
-              <span className="text-white font-semibold mt-1 block">{centre.operatingHours}</span>
-            </div>
-
-            <div className="p-3 rounded-xl bg-[#1c1f2a] border border-[#262a35]">
-              <span className="text-[#dfe2f1]/50 block">EMERGENCY HELPLINE</span>
-              <span className="text-[#4cd7f6] font-bold mt-1 block">{centre.phone}</span>
-            </div>
-
-            <div className="p-3 rounded-xl bg-[#1c1f2a] border border-[#262a35]">
-              <span className="text-[#dfe2f1]/50 block">TRANSFUSION LICENSE</span>
-              <span className="text-white font-semibold mt-1 block">FDA-MH-2024-8841-B</span>
-            </div>
-          </div>
-
-          <div className="p-3 rounded-xl bg-[#0a0e18] border border-[#262a35] text-xs">
-            <span className="text-[#dfe2f1]/60 block font-mono">SUPPORTED APHERESIS & FRACTIONATION</span>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {['Whole Blood', 'Packed Red Blood Cells (PRBC)', 'Platelet Apheresis (SDP/RDP)', 'Fresh Frozen Plasma (FFP)'].map(
-                (comp) => (
-                  <span key={comp} className="px-2.5 py-1 rounded-md bg-[#1c1f2a] border border-[#262a35] text-[11px] text-white">
-                    ✓ {comp}
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <span className="px-2.5 py-1 rounded bg-[#00a572]/20 text-[#4edea3] text-[10px] font-mono font-bold">
+                  LICENSED FDA-MH-2024
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingLocation(!isEditingLocation)}
+                  className={`px-3 py-1.5 rounded-xl font-headline font-bold text-xs transition-colors cursor-pointer flex items-center gap-1.5 ${
+                    isEditingLocation
+                      ? 'bg-[#262a35] text-white hover:bg-[#313540]'
+                      : 'bg-[#4cd7f6] text-[#003640] hover:brightness-110'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[15px]">
+                    {isEditingLocation ? 'close' : 'edit_location'}
                   </span>
-                )
+                  <span>{isEditingLocation ? 'Cancel Edit' : 'Edit Location'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Centre Location Map */}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between text-xs font-mono text-[#dfe2f1]/70">
+                <span className="uppercase font-semibold">Registered Facility Coordinates</span>
+                <span className="text-white">
+                  {centreCoords.lat.toFixed(4)}° N, {centreCoords.lng.toFixed(4)}° E
+                </span>
+              </div>
+
+              <LeafletMapView
+                center={[centreCoords.lat, centreCoords.lng]}
+                zoom={14}
+                height="320px"
+                markers={[
+                  {
+                    id: 'centre-registered-pin',
+                    lat: centreCoords.lat,
+                    lng: centreCoords.lng,
+                    title: centre.name,
+                    subtitle: centreAddress,
+                    type: 'centre',
+                    status: 'stable',
+                    badge: 'REGISTERED',
+                    isDraggable: isEditingLocation,
+                  },
+                ]}
+                onMapClick={(lat, lng) => {
+                  if (isEditingLocation) {
+                    setCentreCoords({ lat, lng });
+                  }
+                }}
+                legend={
+                  <div className="text-[11px] text-white">
+                    {isEditingLocation ? (
+                      <span className="text-[#4cd7f6] font-bold">
+                        Click anywhere on map or drag pin to relocate
+                      </span>
+                    ) : (
+                      <span>Registered Facility Pin: {centre.name}</span>
+                    )}
+                  </div>
+                }
+              />
+
+              {isEditingLocation && (
+                <div className="p-3.5 rounded-xl bg-[#0a0e18] border border-[#4cd7f6]/40 flex flex-col sm:flex-row items-center justify-between gap-3 animate-in fade-in">
+                  <div className="text-xs font-mono">
+                    <span className="text-[#4cd7f6] font-bold block">Location Editing Active</span>
+                    <span className="text-[#dfe2f1]/70 text-[11px]">
+                      Lat: {centreCoords.lat.toFixed(5)}, Lng: {centreCoords.lng.toFixed(5)}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditingLocation(false);
+                        showToast('Registered blood centre coordinates saved successfully.');
+                      }}
+                      className="px-4 py-1.5 rounded-xl bg-[#00a572] text-[#00311f] font-headline font-bold text-xs hover:brightness-110 cursor-pointer shadow-md w-full sm:w-auto text-center"
+                    >
+                      Save Registered Location
+                    </button>
+                  </div>
+                </div>
               )}
+            </div>
+
+            {/* Profile Detail Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-mono">
+              <div className="p-3.5 rounded-xl bg-[#1c1f2a] border border-[#262a35]">
+                <span className="text-[#dfe2f1]/50 block">MUNICIPAL ADDRESS</span>
+                <span className="text-white font-semibold mt-1 block font-sans">{centreAddress}</span>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#1c1f2a] border border-[#262a35]">
+                <span className="text-[#dfe2f1]/50 block">OPERATING HOURS</span>
+                <span className="text-white font-semibold mt-1 block">{centre.operatingHours}</span>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#1c1f2a] border border-[#262a35]">
+                <span className="text-[#dfe2f1]/50 block">EMERGENCY HELPLINE</span>
+                <span className="text-[#4cd7f6] font-bold mt-1 block">{centre.phone}</span>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#1c1f2a] border border-[#262a35]">
+                <span className="text-[#dfe2f1]/50 block">TRANSFUSION LICENSE</span>
+                <span className="text-white font-semibold mt-1 block">FDA-MH-2024-8841-B</span>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-[#0a0e18] border border-[#262a35] text-xs">
+              <span className="text-[#dfe2f1]/60 block font-mono">SUPPORTED APHERESIS & FRACTIONATION</span>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {['Whole Blood', 'Packed Red Blood Cells (PRBC)', 'Platelet Apheresis (SDP/RDP)', 'Fresh Frozen Plasma (FFP)'].map(
+                  (comp) => (
+                    <span key={comp} className="px-2.5 py-1 rounded-md bg-[#1c1f2a] border border-[#262a35] text-[11px] text-white">
+                      ✓ {comp}
+                    </span>
+                  )
+                )}
+              </div>
             </div>
           </div>
         </div>

@@ -9,6 +9,13 @@ import {
   HospitalTab,
 } from '../../types/bloodlink';
 import { MAP_MUMBAI_URL } from '../../data/mockData';
+import { LeafletMapView, MapMarker } from '../maps/LeafletMapView';
+import {
+  calculateHaversineDistance,
+  formatDistance,
+  getExternalDirectionsUrl,
+  PRESET_MUMBAI_AREAS,
+} from '../../utils/geoUtils';
 
 interface HospitalDashboardProps {
   requests: EmergencyRequest[];
@@ -48,6 +55,16 @@ export const HospitalDashboard: React.FC<HospitalDashboardProps> = ({
 
   // Selected blood centre for quick stock preview
   const [selectedCentreModal, setSelectedCentreModal] = useState<BloodCentre | null>(null);
+
+  // Map state for Nearby Centres
+  const [selectedMapCentreId, setSelectedMapCentreId] = useState<string | null>(null);
+  const [targetBloodGroupFilter, setTargetBloodGroupFilter] = useState<BloodGroup>('O-');
+  const [centresViewMode, setCentresViewMode] = useState<'both' | 'map' | 'list'>('both');
+  const [hospitalLocation, setHospitalLocation] = useState({
+    name: 'Lilavati Hospital & Research Centre',
+    lat: 19.0519,
+    lng: 72.8295,
+  });
 
   // Metrics calculation
   const activeRequests = requests.filter((r) => r.status !== 'fulfilled');
@@ -672,61 +689,301 @@ export const HospitalDashboard: React.FC<HospitalDashboardProps> = ({
       )}
 
       {/* VIEW 4: NEARBY BLOOD CENTRES */}
-      {activeTab === 'nearby-centres' && (
-        <div className="p-5 rounded-2xl bg-[#171b26] border border-[#262a35] flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="font-headline text-lg font-bold text-white">Authorized Municipal Blood Centres</h2>
-              <p className="text-xs text-[#dfe2f1]/60">
-                Authorized transfusion banks with certified cold chain storage.
-              </p>
-            </div>
-          </div>
+      {activeTab === 'nearby-centres' && (() => {
+        // Compute Haversine distances from hospital location
+        const centresWithDistance = centres.map((centre) => {
+          const distance =
+            centre.lat && centre.lng
+              ? calculateHaversineDistance(
+                  hospitalLocation.lat,
+                  hospitalLocation.lng,
+                  centre.lat,
+                  centre.lng
+                )
+              : centre.distanceKm;
+          return { ...centre, calculatedDistance: distance };
+        });
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {centres.map((centre) => (
-              <div
-                key={centre.id}
-                className="p-4 rounded-xl bg-[#1c1f2a] border border-[#262a35] flex flex-col justify-between gap-3"
-              >
+        // Generate Leaflet Markers
+        const mapMarkers: MapMarker[] = [
+          // Hospital Marker
+          {
+            id: 'hospital-origin',
+            lat: hospitalLocation.lat,
+            lng: hospitalLocation.lng,
+            title: hospitalLocation.name,
+            subtitle: 'Hospital Origin (Request Location)',
+            type: 'hospital',
+            status: 'critical',
+            badge: 'HOSPITAL',
+          },
+          // Centre Markers
+          ...centresWithDistance
+            .filter((c) => c.lat && c.lng)
+            .map((c) => {
+              const stock = c.stockByGroup[targetBloodGroupFilter] || {
+                units: 0,
+                status: 'stable',
+              };
+              return {
+                id: c.id,
+                lat: c.lat!,
+                lng: c.lng!,
+                title: c.name,
+                subtitle: `${c.calculatedDistance} km away · ${stock.units}u of ${targetBloodGroupFilter}`,
+                type: 'centre' as const,
+                status: stock.status,
+                badge: `${stock.units}u`,
+              };
+            }),
+        ];
+
+        return (
+          <div className="flex flex-col gap-5">
+            {/* Control Bar: View Toggle, Blood Group Filter, Hospital Preset */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-[#171b26] border border-[#262a35] flex flex-col gap-4">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                 <div>
-                  <div className="flex items-start justify-between">
-                    <span className="font-headline font-bold text-sm text-white">
-                      {centre.name}
-                    </span>
-                    <span className="text-xs font-mono text-[#4cd7f6]">
-                      {centre.distanceKm} km
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-[#4cd7f6]"></span>
+                    <span className="font-mono text-[11px] font-semibold text-[#4cd7f6] uppercase tracking-wider">
+                      Municipal Transfusion Grid
                     </span>
                   </div>
-                  <p className="text-xs text-[#dfe2f1]/60 mt-0.5">{centre.address}</p>
-
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] font-mono">
-                    <div className="p-2 rounded bg-[#0a0e18]">
-                      <span className="text-[#dfe2f1]/50 block">O- Units:</span>
-                      <span className="text-white font-bold">{centre.stockByGroup['O-']?.units || 0}u</span>
-                    </div>
-                    <div className="p-2 rounded bg-[#0a0e18]">
-                      <span className="text-[#dfe2f1]/50 block">O+ Units:</span>
-                      <span className="text-white font-bold">{centre.stockByGroup['O+']?.units || 0}u</span>
-                    </div>
-                  </div>
+                  <h2 className="font-headline text-lg sm:text-xl font-bold text-white mt-0.5">
+                    Nearby Authorized Blood Centres
+                  </h2>
+                  <p className="text-xs text-[#dfe2f1]/60">
+                    Showing certified transfusion reserves relative to{' '}
+                    <strong className="text-white">{hospitalLocation.name}</strong>.
+                  </p>
                 </div>
 
-                <div className="flex items-center justify-between pt-2 border-t border-[#262a35] text-xs font-mono">
-                  <span className="text-[#dfe2f1]/50">{centre.operatingHours}</span>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCentreModal(centre)}
-                    className="text-[#4cd7f6] hover:underline cursor-pointer"
-                  >
-                    View All Stock
-                  </button>
+                {/* View Mode Toggle */}
+                <div className="flex items-center gap-2 self-start lg:self-auto">
+                  <div className="flex items-center bg-[#1c1f2a] p-1 rounded-xl border border-[#262a35]">
+                    {(['both', 'map', 'list'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setCentresViewMode(mode)}
+                        className={`px-3 py-1 rounded-lg text-xs font-mono font-medium capitalize transition-colors cursor-pointer ${
+                          centresViewMode === mode
+                            ? 'bg-[#262a35] text-white font-bold shadow-sm'
+                            : 'text-[#dfe2f1]/60 hover:text-white'
+                        }`}
+                      >
+                        {mode === 'both' ? 'Split View' : mode === 'map' ? 'Map Only' : 'List Only'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-            ))}
+
+              {/* Filters: Inspect Blood Group & Origin Hospital */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 pt-3 border-t border-[#262a35] items-center">
+                {/* Blood Group Switcher */}
+                <div className="md:col-span-7 flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="text-xs font-mono text-[#dfe2f1]/70 whitespace-nowrap">
+                    Inspect Group:
+                  </span>
+                  <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
+                    {(['O-', 'O+', 'A-', 'A+', 'B-', 'B+', 'AB-', 'AB+'] as BloodGroup[]).map((bg) => (
+                      <button
+                        key={bg}
+                        type="button"
+                        onClick={() => setTargetBloodGroupFilter(bg)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+                          targetBloodGroupFilter === bg
+                            ? 'bg-[#ff5451] text-[#5c0008] shadow-sm'
+                            : 'bg-[#1c1f2a] text-[#dfe2f1]/70 hover:bg-[#262a35] border border-[#262a35]'
+                        }`}
+                      >
+                        {bg}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Hospital Origin Switcher */}
+                <div className="md:col-span-5 flex items-center justify-end gap-2 text-xs font-mono text-[#dfe2f1]/60">
+                  <span className="hidden sm:inline">Hospital:</span>
+                  <select
+                    value={hospitalLocation.name}
+                    onChange={(e) => {
+                      const selected = PRESET_MUMBAI_AREAS.find((p) => p.name.includes(e.target.value.slice(0, 7)));
+                      if (selected) {
+                        setHospitalLocation({
+                          name: selected.name,
+                          lat: selected.lat,
+                          lng: selected.lng,
+                        });
+                      }
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-[#1c1f2a] border border-[#262a35] text-xs text-white focus:outline-none focus:border-[#4cd7f6]"
+                  >
+                    <option value="Lilavati Hospital & Research Centre">Lilavati Hospital (Bandra)</option>
+                    <option value="KEM Hospital Emergency Ward">KEM Hospital (Parel)</option>
+                    <option value="Rajiv Gandhi Super-Speciality Hospital">Rajiv Gandhi Hospital (Andheri)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Split Content: Interactive Leaflet Map + Centres List */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+              {/* Left/Top: Interactive Map */}
+              {(centresViewMode === 'both' || centresViewMode === 'map') && (
+                <div
+                  className={`${
+                    centresViewMode === 'both' ? 'lg:col-span-7' : 'lg:col-span-12'
+                  } flex flex-col gap-2`}
+                >
+                  <LeafletMapView
+                    center={[hospitalLocation.lat, hospitalLocation.lng]}
+                    zoom={12}
+                    height={centresViewMode === 'map' ? '540px' : '440px'}
+                    markers={mapMarkers}
+                    selectedMarkerId={selectedMapCentreId}
+                    onSelectMarker={(id) => {
+                      if (id !== 'hospital-origin') {
+                        setSelectedMapCentreId(id);
+                      }
+                    }}
+                    legend={
+                      <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                        <span className="flex items-center gap-1.5 text-white">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#ff5451]"></span> Hospital Origin
+                        </span>
+                        <span className="flex items-center gap-1.5 text-white">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#ff5451]"></span> Critical Need (&lt;5u)
+                        </span>
+                        <span className="flex items-center gap-1.5 text-white">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#4cd7f6]"></span> Low Stock
+                        </span>
+                        <span className="flex items-center gap-1.5 text-white">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#4edea3]"></span> Adequate Stock
+                        </span>
+                      </div>
+                    }
+                  />
+
+                  <div className="flex items-center justify-between text-[11px] font-mono text-[#dfe2f1]/50 px-1">
+                    <span>Distances: Straight-line (Haversine formula)</span>
+                    <span>Click marker to focus depot</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Right/Bottom: Synchronized Centres List */}
+              {(centresViewMode === 'both' || centresViewMode === 'list') && (
+                <div
+                  className={`${
+                    centresViewMode === 'both' ? 'lg:col-span-5' : 'lg:col-span-12'
+                  } flex flex-col gap-3.5 max-h-[580px] overflow-y-auto pr-1`}
+                >
+                  {centresWithDistance.map((centre) => {
+                    const isSelected = selectedMapCentreId === centre.id;
+                    const stock = centre.stockByGroup[targetBloodGroupFilter] || {
+                      units: 0,
+                      status: 'stable',
+                    };
+                    const isCrit = stock.status === 'critical';
+                    const isLow = stock.status === 'low';
+
+                    return (
+                      <div
+                        key={centre.id}
+                        onClick={() => setSelectedMapCentreId(centre.id)}
+                        className={`p-4 rounded-xl bg-[#1c1f2a] border transition-all cursor-pointer flex flex-col justify-between gap-3 ${
+                          isSelected
+                            ? 'border-[#4cd7f6] ring-1 ring-[#4cd7f6] shadow-lg shadow-[#4cd7f6]/10'
+                            : isCrit
+                            ? 'border-[#ff5451]/40 hover:border-[#ff5451]'
+                            : 'border-[#262a35] hover:border-[#353944]'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-start justify-between">
+                            <span className="font-headline font-bold text-sm text-white">
+                              {centre.name}
+                            </span>
+                            <span className="text-xs font-mono text-[#4cd7f6] font-bold">
+                              {formatDistance(centre.calculatedDistance)}
+                            </span>
+                          </div>
+                          <p className="text-xs text-[#dfe2f1]/60 mt-0.5">{centre.address}</p>
+
+                          {/* Quick Stock Indicator for Selected Blood Group */}
+                          <div className="mt-3 p-2.5 rounded-lg bg-[#0a0e18] border border-[#262a35] flex items-center justify-between font-mono text-xs">
+                            <span className="text-[#dfe2f1]/70">
+                              {targetBloodGroupFilter} Reserve:
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`font-bold ${
+                                  isCrit ? 'text-[#ff5451]' : isLow ? 'text-[#4cd7f6]' : 'text-[#4edea3]'
+                                }`}
+                              >
+                                {stock.units} units
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                                  isCrit
+                                    ? 'bg-[#ff5451]/20 text-[#ffb3ad]'
+                                    : isLow
+                                    ? 'bg-[#4cd7f6]/20 text-[#4cd7f6]'
+                                    : 'bg-[#00a572]/20 text-[#4edea3]'
+                                }`}
+                              >
+                                {isCrit ? 'CRITICAL' : isLow ? 'LOW' : 'STABLE'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-[#262a35] text-xs font-mono">
+                          <span className="text-[#dfe2f1]/50">{centre.operatingHours}</span>
+                          <div className="flex items-center gap-2">
+                            {centre.lat && centre.lng && (
+                              <a
+                                href={getExternalDirectionsUrl(
+                                  centre.lat,
+                                  centre.lng,
+                                  hospitalLocation.lat,
+                                  hospitalLocation.lng
+                                )}
+                                target="_blank"
+                                rel="noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-[#dfe2f1]/60 hover:text-white flex items-center gap-0.5 text-[11px]"
+                                title="Open routing directions in OpenStreetMap"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">directions</span>
+                                <span>Directions</span>
+                              </a>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedCentreModal(centre);
+                              }}
+                              className="text-[#4cd7f6] hover:underline cursor-pointer"
+                            >
+                              All Stock
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Simple Stock Details Modal for Blood Centre */}
       {selectedCentreModal && (

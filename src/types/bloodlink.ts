@@ -41,6 +41,8 @@ export interface EmergencyRequest {
   requestId: string;
   hospitalName: string;
   location: string;
+  lat?: number;
+  lng?: number;
   bloodGroup: BloodGroup;
   component: ComponentType;
   unitsNeeded: number;
@@ -67,6 +69,8 @@ export interface Donor {
   bloodGroup: BloodGroup;
   distanceKm: number;
   locationArea: string;
+  lat?: number;
+  lng?: number;
   avatarUrl: string;
   daysSinceDonation: number;
   verifiedDonationsCount: number;
@@ -121,6 +125,8 @@ export interface BloodCentre {
   name: string;
   address: string;
   distanceKm: number;
+  lat?: number;
+  lng?: number;
   operatingHours: string;
   phone: string;
   isAuthorized: boolean;
@@ -141,6 +147,8 @@ export interface DonationCamp {
   title: string;
   locationName: string;
   address: string;
+  lat?: number;
+  lng?: number;
   dateStr: string;
   timeStr: string;
   targetTag: string;
